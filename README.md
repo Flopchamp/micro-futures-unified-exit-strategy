@@ -83,17 +83,22 @@ This strategy implements an ultra-aggressive scalping and swing trading system w
 
 ## 📊 Performance Characteristics
 
-### Risk/Reward Focus
-- Ultra-tight stops: 0.75-1.75x ATR
-- Wide profit targets: 1.2-12.0x ATR
-- Designed for high R/R ratios (1.5:1 minimum)
-- Optimized to reduce overtrading
+### Trading Approach
+- **Ultra-high frequency**: Designed for maximum signal generation
+- **Micro patterns**: Sub-bar price action and instant turns
+- **Session-aware**: Optimized for different trading sessions
+- **Regime-adaptive**: Adjusts to trending vs ranging markets
 
-### Trade Management
-- Partial position closing at each TP level
-- Progressive profit protection
-- Dynamic stop upgrading (never downgrading)
-- Session-aware exit logic
+### Risk Management
+- **Dynamic Stops**: 1.2-1.8x ATR based on timeframe
+- **Progressive Exits**: 60% quick, 40% runners
+- **Daily Loss Protection**: 5% maximum daily drawdown
+- **Position Limits**: 12% max per trade, 2 concurrent positions max
+
+### Signal Quality
+- **Multiple Confirmations**: Requires trend + momentum + price action alignment
+- **Stronger Filters**: Hull MA slope + SuperTrend + envelope breakout
+- **Quality Over Quantity**: Balanced approach to reduce overtrading
 
 ## 🚀 Getting Started
 
@@ -124,139 +129,305 @@ This strategy implements an ultra-aggressive scalping and swing trading system w
 
 ### Key Parameters
 
-#### Entry Filters
+#### Ultra Trading Mode
 ```pine
-// RSI Settings (instrument-specific)
-M2K: 45-75 (long), 25-55 (short)
-MYM: 40-80 (long), 20-60 (short)
-MES: 35-85 (long), 15-65 (short)
-
-// Volume Requirements
-M2K: 1.2x average
-MYM: 1.1x average
-MES: 1.0x average
+ultraMode = true                    // Enable ultra trading
+microScalping = true                // Enable micro scalping
+instantSignals = true               // Enable instant signals
+minimalFilters = true               // Reduce entry friction
 ```
 
-#### Stop Loss & Take Profit
+#### Instrument Multipliers
 ```pine
-// Stop Loss (ATR multipliers)
-Scalp: 0.75-1.25x ATR
-Swing: 1.25-1.75x ATR
+// Trade Frequency
+M2K: 1.8x base multiplier
+MYM: 1.6x base multiplier
+MES: 1.4x base multiplier
 
-// Take Profit Levels
-Scalp TP1-TP4: 1.2x, 2.4x, 3.6x, 5.4x ATR
-Swing TP1-TP4: 2.4x, 5.4x, 9.0x, 12.0x ATR
+// Scalping Multipliers
+M2K: 2.2x scalping multiplier
+MYM: 1.8x scalping multiplier
+MES: 1.6x scalping multiplier
+```
+
+#### Hull Moving Averages
+```pine
+// Base Periods (auto-adjusted per timeframe)
+Main Hull: 25 periods
+Fast Hull: 9 periods
+Signal Hull: 14 periods
+
+// M2K gets 70-80% of base
+// MYM gets 90% of base
+// MES uses base periods
+```
+
+#### Envelope Settings
+```pine
+// Base Settings
+Length: 12 periods
+Deviation: 0.8%
+
+// Instrument-specific
+M2K: 0.9x length, 0.85x deviation
+MYM: Base settings
+MES: 1.1x length, 0.95x deviation
+```
+
+#### SuperTrend Configuration
+```pine
+Pivot Period: 2
+ATR Factor: 2.2
+ATR Period: 8
+
+// Instrument adjustments
+M2K: 0.95x ATR factor
+MYM: 1.05x ATR factor
+MES: Base ATR factor
 ```
 
 #### Risk Management
 ```pine
-Position Size: 8% max equity per trade
-Portfolio Risk: 2% total
-Commission: $0.62 per contract
-Slippage: 1 tick
+Base Risk: 0.6% per trade
+Max Position: 12% of equity
+Max Daily Loss: 5%
+Max Concurrent: 1-2 trades
+
+// Instrument Risk Multipliers
+M2K: 1.3x risk
+MYM: 1.1x risk
+MES: 1.0x risk
+```
+
+#### Session Settings
+```pine
+Pre-Market: 1800 (6:00 PM ET)
+Regular Hours: 0930-1600 (9:30 AM - 4:00 PM ET)
+After Hours: 1600-1700
+
+// Session Multipliers
+Regular: 1.1x frequency
+Extended: 0.7x frequency
+Closed: 0.5x frequency
+```
+
+#### Timeframe Multipliers
+```pine
+1-minute: 1.8x base
+2-minute: 1.6x base
+3-minute: 1.4x base
+5-minute: 1.2x base
+```
+
+#### Take Profit Levels
+```pine
+TP1: 60% at 0.4x ultra-quick (ATR * tpMultiplier * 0.5 * 0.4)
+TP2: 25% at 0.3x quick (ATR * tpMultiplier * 0.3)
+TP3: 10% at 0.6x medium (ATR * tpMultiplier * 0.6)
+TP4: 5% at 1.0x extended (ATR * tpMultiplier * 1.0)
+```
+
+#### Stop Loss & Trailing
+```pine
+// Initial Stop
+1-minute: 1.2x ATR
+2-minute: 1.3x ATR
+3-minute: 1.4x ATR
+5-minute: 1.6x ATR
+
+// Trailing Stop
+Activation: After 0.7x ATR profit
+Trail Distance: 0.6x ATR
 ```
 
 ### Customization Tips
 
-1. **For More Conservative Trading**
-   - Reduce position size multipliers
-   - Tighten RSI filter bands
-   - Increase volume requirements
-   - Raise minimum R/R ratio
+1. **For Lower Frequency Trading**
+   - Reduce trade multipliers (1.0-1.2x range)
+   - Reduce scalping multipliers (1.2-1.5x)
+   - Disable instant signals
+   - Enable stricter filters
 
-2. **For More Aggressive Trading**
-   - Widen RSI bands slightly
-   - Lower volume thresholds
-   - Adjust TP levels closer
+2. **For Higher Frequency Trading**
+   - Increase trade multipliers (2.0-3.0x range)
+   - Increase scalping multipliers (2.5-3.5x)
+   - Enable all signal types
+   - Use minimal filters
 
-3. **For Different Timeframes**
-   - Test on 3min, 5min, 15min charts
-   - Adjust ATR period for longer timeframes
-   - Modify session-based exits accordingly
+3. **For Different Market Conditions**
+   - **Trending Markets**: Increase volatility multiplier, use wider trailing
+   - **Ranging Markets**: Tighter stops, quicker profit taking
+   - **High Volatility**: Reduce position size, wider stops
+   - **Low Volatility**: Can increase size, tighter stops
+
+4. **Session-Specific Optimization**
+   - **Regular Hours**: Can increase frequency multiplier (1.2-1.5x)
+   - **Pre-Market**: More conservative (0.5-0.7x)
+   - **After Hours**: Reduced activity (0.5-0.8x)
 
 ## 📈 Testing Recommendations
 
 ### Backtesting Setup
-1. **Data Quality**: Use minimum 6 months historical data
-2. **Timeframe**: Start with 5-minute charts
-3. **Commission/Slippage**: Keep realistic settings enabled
-4. **Initial Capital**: $10,000-50,000 recommended
+1. **Data Quality**: Use minimum 6 months historical data with tick precision
+2. **Recommended Timeframes**: 1-minute, 3-minute, or 5-minute charts
+3. **Initial Capital**: $25,000 (strategy default for futures margin)
+4. **Commission**: Include realistic futures commission ($0.62/contract typical)
+5. **Slippage**: Account for 1 tick slippage minimum
 
 ### Performance Metrics to Monitor
-- **Profit Factor**: Target 1.5+ (indicates R/R balance)
-- **Win Rate**: Secondary metric (can be 60-70% with good R/R)
-- **Max Drawdown**: Should be <20%
-- **Number of Trades**: Avoid overtrading (>500/month may indicate issues)
-- **Average Win vs Average Loss**: Should favor wins 2:1+
+- **Total Trades**: High frequency expected (watch for overtrading >1000/month)
+- **Win Rate**: Secondary metric (60-75% typical with good filters)
+- **Profit Factor**: Target 1.3+ (critical for high-frequency strategies)
+- **Average Trade**: Should exceed commission + slippage costs
+- **Max Drawdown**: Should be <15-20%
+- **Average Win vs Average Loss**: Monitor R/R balance
+- **Trades Per Session**: Check session distribution
+
+### Instrument-Specific Testing
+- **M2K**: Expect highest trade frequency, shorter holding periods
+- **MYM**: Moderate frequency, balanced holding times
+- **MES**: Lower frequency, potentially longer holds
 
 ### Debug Features
-Enable debug plotting to monitor:
-- Current R/R ratio calculations
-- Stop distance in ticks
-- TP distances for all levels
-- Entry signal strength
-- Active exit type
+Monitor via Data Window:
+- `Total Positions`: Current concurrent position count
+- `Effective Risk %`: Actual risk being taken per trade
+- `TF Multiplier`: Active timeframe multiplier
+- `Holding Period`: Bars since entry
+- `Position Size`: Dollar value of current position
+- `Trade Frequency`: Active frequency boost
+- `Session Multiplier`: Current session adjustment
+- `Instrument`: 1=MYM, 2=M2K, 3=MES
 
 ## 🔧 Troubleshooting
 
-### No Trades Executing
-- Check RSI filter bands (may be too tight)
-- Verify volume requirements (lower thresholds)
-- Ensure correct instrument symbol
-- Check if R/R validation is too strict
+### Too Many Trades (>1000/month)
+- **Reduce trade multipliers**: Lower M2K/MYM/MES base multipliers to 1.0-1.2x
+- **Reduce scalping multipliers**: Lower to 1.2-1.5x range
+- **Disable instant signals**: Turn off `instantSignals` for fewer micro-turns
+- **Increase base Hull periods**: Use 30-35 for main, 12-15 for fast
+- **Stricter envelope**: Increase deviation to 1.0-1.2%
+- **Disable micro scalping**: Turn off `microScalping` mode
 
-### Too Many Trades
-- Tighten RSI bands
-- Increase volume multiplier requirements
-- Enable stricter volatility filters
-- Reduce position size multipliers
+### Too Few Trades (<50/month)
+- **Increase trade multipliers**: Raise to 2.0-3.0x range
+- **Increase scalping multipliers**: Raise to 2.5-3.5x range
+- **Enable all signals**: Activate instant, micro, and scalp signals
+- **Reduce Hull periods**: Lower to 15-20 main, 6-8 fast
+- **Tighter envelope**: Reduce deviation to 0.5-0.6%
+- **Enable minimal filters**: Activate `minimalFilters` mode
 
-### Poor Profit Factor
-- Widen TP targets (increase multipliers)
-- Tighten stop loss (decrease multipliers)
-- Enable profit lock system
-- Review R/R validation settings
+### Poor Win Rate (<50%)
+- **Check stop placement**: May be too tight for volatility
+- **Verify signal quality**: Ensure multiple confirmations required
+- **Review timeframe**: Lower timeframes may have more noise
+- **Check session filters**: Avoid low-liquidity sessions
+- **Increase Hull periods**: Smoother signals with less whipsaws
 
-### Stops Hit Too Often
-- Increase stop loss ATR multiplier
-- Enable breakeven earlier
-- Adjust profit lock percentages
-- Review market volatility conditions
+### Poor Profit Factor (<1.2)
+- **Widen TP targets**: Increase `tpMultiplier` to 1.2-1.5x
+- **Review exit timing**: May be exiting too early
+- **Check trailing stop**: Ensure activating at proper profit level
+- **Reduce trade frequency**: Quality over quantity
+- **Verify R/R balance**: Monitor avg win vs avg loss
+
+### Stops Hit Too Frequently
+- **Widen stops**: Increase ATR multiplier from 1.2 to 1.8-2.0x
+- **Check volatility regime**: May be trading in high-volatility incorrectly
+- **Review entry timing**: Entering too late in moves
+- **Use smart trailing**: Enable with wider activation ratio (0.9-1.0x)
+
+### Inconsistent Results Across Instruments
+- **M2K volatile**: Reduce multipliers, tighten risk (0.8-1.0x)
+- **MYM balanced**: Use standard settings
+- **MES stable**: Can increase aggression slightly (1.1-1.2x)
+- **Adjust individually**: Each instrument has unique characteristics
+
+### Session-Specific Issues
+- **Pre-market**: Lower frequency expected (0.5-0.7x normal)
+- **Regular hours**: Should see most activity
+- **After-hours**: Reduced but should still trade
+- **Check session times**: Verify ET timezone alignment
+
+### High Drawdowns (>20%)
+- **Reduce position sizing**: Lower `maxPositionSize` to 8-10%
+- **Reduce risk per trade**: Lower base risk to 0.3-0.4%
+- **Enable daily loss limit**: Enforce max daily loss strictly
+- **Reduce concurrent trades**: Limit to 1 position max
+- **Check market conditions**: Strategy may not suit current regime
 
 ## 📝 Strategy Logic Flow
 
 ```
-1. Entry Signal Detection
-   ├─ RSI confirms oversold/overbought
-   ├─ Volume surge detected
-   ├─ Volatility within acceptable range
-   └─ Trend alignment confirmed
-   
-2. Risk/Reward Validation
-   ├─ Calculate stop loss distance
-   ├─ Calculate TP1 distance
-   ├─ Verify minimum R/R ratio
-   └─ Approve/reject trade
-   
-3. Position Entry
-   ├─ Calculate position size
-   ├─ Set initial stop loss
-   ├─ Set all TP levels
-   └─ Initialize exit management
-   
-4. Trade Management (Continuous)
-   ├─ Monitor for TP hits
-   ├─ Upgrade stop loss (never downgrade)
-   ├─ Activate profit locks
-   ├─ Enable breakeven protection
-   ├─ Trigger trailing stop
-   └─ Check time/volatility exits
-   
-5. Exit Execution
-   ├─ Partial closes at each TP
+1. Instrument Detection & Optimization
+   ├─ Auto-detect MYM/M2K/MES from ticker
+   ├─ Load instrument-specific multipliers
+   ├─ Adjust Hull/Envelope/SuperTrend parameters
+   └─ Set risk and scalping multipliers
+
+2. Session & Timeframe Analysis
+   ├─ Determine current session (Pre/Regular/After)
+   ├─ Detect chart timeframe (1m/2m/3m/5m)
+   ├─ Calculate session multiplier
+   └─ Calculate timeframe multiplier
+
+3. Market Regime Detection
+   ├─ Measure trend strength (strong/moderate/ranging)
+   ├─ Assess volatility (high/normal)
+   ├─ Calculate dynamic position size
+   └─ Set effective risk percentage
+
+4. Signal Generation (Multi-Source)
+   ├─ Hull MA Analysis
+   │  ├─ Calculate Main/Fast/Signal HMAs
+   │  ├─ Detect micro-turns and slopes
+   │  └─ Identify acceleration patterns
+   ├─ Envelope Analysis
+   │  ├─ Calculate upper/lower bands
+   │  ├─ Detect micro-breakouts
+   │  └─ Identify envelope touches
+   ├─ SuperTrend Analysis
+   │  ├─ Calculate pivot-based bands
+   │  ├─ Determine trend direction
+   │  └─ Detect trend changes
+   └─ Momentum Analysis
+      ├─ RSI and Stochastic calculation
+      ├─ Micro momentum detection
+      └─ Momentum acceleration
+
+5. Signal Confirmation & Entry
+   ├─ Combine micro/instant/scalp signals
+   ├─ Require multiple confirmations:
+   │  ├─ Hull slope alignment
+   │  ├─ SuperTrend confirmation
+   │  └─ Momentum/price action support
+   ├─ Verify session allowance
+   ├─ Check position limits
+   ├─ Confirm daily loss not exceeded
+   └─ Execute entry with dynamic size
+
+6. Position Management (In Trade)
+   ├─ Track holding period
+   ├─ Monitor for TP1 hit (60% exit)
+   ├─ Monitor for TP2 hit (25% exit)
+   ├─ Monitor for TP3 hit (10% exit)
+   ├─ Monitor for TP4 hit (5% exit)
+   ├─ Activate trailing stop after profit threshold
+   └─ Exit at max holding period if enabled
+
+7. Risk Management (Continuous)
+   ├─ Monitor daily P&L
+   ├─ Track concurrent positions
+   ├─ Enforce position size limits
+   ├─ Apply stop loss protection
+   └─ Execute smart trailing when activated
+
+8. Exit Execution
+   ├─ Partial exits at each TP level
    ├─ Stop loss if triggered
-   ├─ Session close if enabled
-   └─ Emergency exits if needed
+   ├─ Trailing stop if activated
+   ├─ Time-based exit if holding limit reached
+   └─ Update position counters
 ```
 
 ## ⚠️ Risk Disclosure
@@ -274,32 +445,88 @@ Enable debug plotting to monitor:
 
 ### Code Structure
 - **Language**: Pine Script v5
-- **Type**: Strategy (not indicator)
-- **Execution**: On-close confirmation
-- **Pyramiding**: Disabled (no position averaging)
-- **Order Size**: Dynamic ATR-based calculation
+- **Type**: Strategy (backtestable with real-time alerts)
+- **Initial Capital**: $25,000 (default for futures)
+- **Order Type**: Cash-based with dynamic sizing
+- **Execution**: On-close bar confirmation
+- **Pyramiding**: Optional (configurable multi-position support)
+
+### Key Calculations
+
+#### Hull Moving Average
+```pine
+hma(src, len) => ta.wma(2 * ta.wma(src, len/2) - ta.wma(src, len), sqrt(len))
+```
+
+#### Dynamic Position Size
+```pine
+1. Calculate ATR-based stop distance
+2. Apply timeframe multipliers (1.2-1.8x ATR)
+3. Calculate risk in dollars (equity * effectiveRisk%)
+4. Determine position size: risk$ / (stop distance * point value)
+5. Apply position limits (12% max, $75 minimum)
+6. Adjust for pyramid scaling if applicable
+```
+
+#### Effective Risk Calculation
+```pine
+effectiveRisk = baseRisk * instrumentMultiplier * riskMultiplier * tradeFrequency
+Cap at 4.5% maximum
+```
+
+#### Trade Frequency Calculation
+```pine
+frequency = baseFrequency * instrumentMultiplier * timeframeMultiplier * sessionMultiplier
+```
 
 ### Dependencies
 - TradingView Pine Script v5 runtime
 - Real-time or historical futures data feed
-- No external indicators required (all calculations built-in)
+- No external indicators required (all built-in)
+
+### Performance Characteristics
+- **Execution Speed**: Fast (minimal calculations per bar)
+- **Memory Usage**: Low (limited historical references)
+- **Indicator Count**: 3 core (HMA, Envelope, SuperTrend)
+- **Plot Count**: Multiple for visualization and debugging
 
 ## 📚 Version History
 
-### Current Version: MJV6
-- Unified stop loss system implementation
-- Optimized risk/reward ratios (50% tighter stops, 3x wider TPs)
-- Instrument-specific parameter optimization
-- Enhanced debugging and visualization
-- Alert dedupe system
-- Relaxed filter balance for trade generation
+### Current Version: MJV6 Ultra
+**Focus**: High-frequency ultra trading with intelligent signal generation
+
+**Key Features**:
+- Ultra trading mode with instant signals
+- Micro scalping and pattern detection
+- Instrument-specific optimization (M2K/MYM/MES)
+- Session-based trading (Pre/Regular/After hours)
+- Automatic timeframe adaptation (1m-5m)
+- Market regime detection and adaptive sizing
+- Multi-level progressive take profit (TP1-TP4)
+- Smart trailing stop activation
+- Comprehensive monitoring and debugging
+
+**Optimizations**:
+- Balanced signal generation (reduced overtrading)
+- Stronger entry confirmations (multiple signals required)
+- Adaptive Hull MA periods per instrument and timeframe
+- Dynamic envelope sensitivity
+- Session-aware frequency adjustments
+- Regime-based position sizing (up to 3.5x in ideal conditions)
+
+**Trade Management**:
+- 4-level progressive exits (60%/25%/10%/5%)
+- Ultra-quick TP1 at 0.4x target (60% position)
+- Time-based holding limits (25-35 bars)
+- Smart trailing after 0.7x ATR profit
+- ATR-based stop loss (1.2-1.8x depending on timeframe)
 
 ### Previous Iterations
-- MJV5: Initial multi-exit implementation
-- MJV4: Advanced profit protection
-- MJV3: Basic exit management
-- MJV2: Multi-instrument support
-- MJV1: Single-instrument prototype
+- **MJV5**: Initial ultra-trading implementation with micro signals
+- **MJV4**: Advanced profit protection and multi-TP system
+- **MJV3**: Basic timeframe optimization
+- **MJV2**: Multi-instrument support (MYM/MES/M2K)
+- **MJV1**: Single-instrument prototype with Hull MA
 
 ## 🤝 Contributing
 
@@ -329,18 +556,36 @@ For questions or issues:
 ## 🎓 Learning Resources
 
 **Understanding the Strategy:**
-- Study ATR (Average True Range) for dynamic stops
-- Learn about risk/reward ratios in trading
-- Research proper position sizing methods
-- Understand futures contract specifications
+- Study Hull Moving Averages (HMA) for trend detection
+- Learn about micro price action patterns
+- Research futures contract specifications (tick size, point value)
+- Understand session-based trading (Globex, RTH, extended hours)
+- Study market regime classification (trending vs ranging)
+- Learn about ATR (Average True Range) for dynamic stops
+
+**Futures Trading Fundamentals:**
+- Micro futures vs standard futures contracts
+- Margin requirements and leverage
+- Session trading hours for equity futures
+- Commission structures and slippage
+- Contract rollover dates
+- Market depth and liquidity patterns
 
 **Pine Script Resources:**
 - [TradingView Pine Script Documentation](https://www.tradingview.com/pine-script-docs/)
-- [Pine Script User Manual](https://www.tradingview.com/pine-script-docs/en/v5/Introduction.html)
+- [Pine Script v5 User Manual](https://www.tradingview.com/pine-script-docs/en/v5/Introduction.html)
+- [Pine Script v5 Migration Guide](https://www.tradingview.com/pine-script-docs/en/v5/migration_guides/v4_to_v5_migration_guide.html)
 - TradingView Community Scripts for inspiration
+
+**High-Frequency Trading Concepts:**
+- Micro pattern recognition
+- Ultra-short holding periods
+- Progressive profit taking strategies
+- Dynamic position sizing based on volatility
+- Session-based optimization
 
 ---
 
-**Disclaimer**: This strategy is provided as-is without any guarantees. Always conduct your own research and testing. Trade responsibly.
+**Disclaimer**: This strategy is provided as-is without any guarantees. Futures trading involves substantial risk of loss and is not suitable for all investors. Always conduct your own research and testing. Trade responsibly with money you can afford to lose.
 
-*Last Updated: December 2025*
+*Last Updated: December 2025 - MJV6 Ultra Version*
