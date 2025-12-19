@@ -1,0 +1,619 @@
+//@version=5
+strategy("MJV6 MYM/MES/M2K — Scalping & Swing Hybrid", overlay=true, initial_capital=25000, default_qty_type=strategy.cash, default_qty_value=1000, 
+         commission_type=strategy.commission.cash_per_contract, commission_value=0.62, slippage=1)
+
+// --- Instrument detection: MYM (Dow), MES (ES), M2K (Russell)
+isMYM = str.contains(syminfo.ticker, "MYM") or str.contains(syminfo.ticker, "YM")
+isMES = str.contains(syminfo.ticker, "MES") or str.contains(syminfo.ticker, "ES")
+isM2K = str.contains(syminfo.ticker, "M2K") or str.contains(syminfo.ticker, "RTY")
+isMicroIndex = isMYM or isMES or isM2K
+
+// --- Instrument multipliers (EMERGENCY fixes for all)
+mymMultiplier = input.float(0.5, "MYM Trade Multiplier (EMERGENCY - Ultra Conservative)", minval=0.1, maxval=2.0)
+mesMultiplier = input.float(0.6, "MES Trade Multiplier (EMERGENCY - Conservative)", minval=0.1, maxval=2.0)
+m2kMultiplier = input.float(0.3, "M2K Trade Multiplier (EMERGENCY - Ultra Conservative)", minval=0.1, maxval=1.0)
+
+// --- Shared controls
+useTP = input.bool(true, "Use Take Profit Levels")
+useSL = input.bool(true, "Use Stop Loss")
+allowMultiplePositions = input.bool(false, "Allow Multiple Positions")
+maxDailyLoss = input.float(5.0, "Max Daily Loss (%)", minval=1.0, maxval=20.0)
+
+// --- Advanced Exit Strategy Controls
+// Take Profit System (TP1-TP4)
+useAdvancedTP = input.bool(true, "Use 4-Level Take Profit System", group="Take Profit")
+tp1Percent = input.float(60.0, "TP1 Position % (Fast Exit)", minval=1.0, maxval=100.0, group="Take Profit")
+tp2Percent = input.float(25.0, "TP2 Position %", minval=1.0, maxval=100.0, group="Take Profit")
+tp3Percent = input.float(10.0, "TP3 Position %", minval=1.0, maxval=100.0, group="Take Profit")
+tp4Percent = input.float(5.0, "TP4 Position % (Runner)", minval=1.0, maxval=100.0, group="Take Profit")
+scalpTP1ATR = input.float(1.2, "Scalp TP1 (ATR multiplier) - WIDE for R/R Fix", minval=0.2, maxval=4.0, group="Take Profit")
+scalpTP2ATR = input.float(2.4, "Scalp TP2 (ATR multiplier) - WIDE for R/R Fix", minval=0.3, maxval=6.0, group="Take Profit")
+scalpTP3ATR = input.float(3.6, "Scalp TP3 (ATR multiplier) - WIDE for R/R Fix", minval=0.5, maxval=8.0, group="Take Profit")
+scalpTP4ATR = input.float(5.4, "Scalp TP4 (ATR multiplier) - WIDE for R/R Fix", minval=0.8, maxval=10.0, group="Take Profit")
+swingTP1ATR = input.float(2.4, "Swing TP1 (ATR multiplier) - WIDE for R/R Fix", minval=0.5, maxval=6.0, group="Take Profit")
+swingTP2ATR = input.float(5.0, "Swing TP2 (ATR multiplier) - WIDE for R/R Fix", minval=1.0, maxval=10.0, group="Take Profit")
+swingTP3ATR = input.float(8.0, "Swing TP3 (ATR multiplier) - WIDE for R/R Fix", minval=2.0, maxval=16.0, group="Take Profit")
+swingTP4ATR = input.float(12.0, "Swing TP4 (ATR multiplier) - WIDE for R/R Fix", minval=3.0, maxval=24.0, group="Take Profit")
+
+// Trailing Stop System
+useTrailingStop = input.bool(true, "Use Smart Trailing Stop", group="Trailing Stop")
+trailActivationATR = input.float(1.5, "Trail Activation (ATR multiplier)", minval=0.5, maxval=5.0, group="Trailing Stop")
+trailStepATR = input.float(0.5, "Trail Step (ATR multiplier)", minval=0.1, maxval=2.0, group="Trailing Stop")
+trailOnlyAfterTP1 = input.bool(true, "Trail Only After TP1 Hit", group="Trailing Stop")
+
+// Breakeven Protection
+useBreakeven = input.bool(true, "Use Breakeven Protection", group="Breakeven")
+breakevenTriggerATR = input.float(1.0, "Breakeven Trigger (ATR)", minval=0.3, maxval=3.0, group="Breakeven")
+breakevenBufferTicks = input.int(2, "Breakeven Buffer (ticks)", minval=0, maxval=10, group="Breakeven")
+
+// ATR Dynamic Stops
+useDynamicATR = input.bool(true, "Use Dynamic ATR Stops", group="Dynamic Stops")
+atrDynamicLookback = input.int(14, "ATR Dynamic Lookback", minval=5, maxval=50, group="Dynamic Stops")
+atrDynamicMultiplier = input.float(2.5, "Dynamic ATR Multiplier", minval=1.0, maxval=5.0, group="Dynamic Stops")
+
+// Profit Lock-In System
+useProfitLock = input.bool(true, "Use Profit Lock-In", group="Profit Lock")
+profitLockLevels = input.int(3, "Number of Lock Levels", minval=1, maxval=5, group="Profit Lock")
+profitLockStep = input.float(1.0, "Lock Step (ATR)", minval=0.3, maxval=2.0, group="Profit Lock")
+profitLockTrail = input.float(0.5, "Lock Trail Distance (ATR)", minval=0.2, maxval=1.5, group="Profit Lock")
+
+// Maximum Profit Drawdown Protection
+useMaxDrawdown = input.bool(true, "Use Max Profit Drawdown Protection", group="Drawdown Protection")
+maxDrawdownPercent = input.float(30.0, "Max Drawdown from Peak (%)", minval=10.0, maxval=80.0, group="Drawdown Protection")
+drawdownMinProfit = input.float(0.5, "Min Profit for Drawdown (ATR)", minval=0.1, maxval=3.0, group="Drawdown Protection")
+
+// Time-Based Profit Protection
+useTimeProtection = input.bool(true, "Use Time-Based Profit Protection", group="Time Protection")
+profitTimeDecayMinutes = input.int(120, "Profit Time Decay (minutes)", minval=30, maxval=480, group="Time Protection")
+timeProtectionMinProfit = input.float(0.3, "Min Profit for Time Protection (ATR)", minval=0.1, maxval=2.0, group="Time Protection")
+
+// Backup Stop Loss
+useBackupStop = input.bool(true, "Use Backup Stop Loss", group="Backup Stop")
+backupStopPercent = input.float(3.0, "Backup Stop Loss (%)", minval=1.0, maxval=10.0, group="Backup Stop")
+
+// Manual Position Size Override
+useManualSize = input.bool(false, "Manual Position Size Override", group="Position Size")
+manualSizePercent = input.float(1.0, "Manual Size (% of equity)", minval=0.1, maxval=5.0, group="Position Size")
+manualSizeDollars = input.float(1000, "Manual Size (Dollars)", minval=100, maxval=50000, group="Position Size")
+manualSizeMode = input.string("Percentage", "Manual Size Mode", options=["Percentage", "Dollars"], group="Position Size")
+
+// Alert & Execution Settings
+useAlertDedupe = input.bool(true, "Dedupe Alerts (One per bar)", group="Execution")
+commissionPerContract = input.float(0.62, "Commission per Contract ($)", minval=0.0, maxval=5.0, group="Execution")
+slippageTicks = input.int(1, "Slippage (ticks)", minval=0, maxval=5, group="Execution")
+
+// Enhanced Profit Protection (Alternative to existing system)
+useEnhancedProtection = input.bool(false, "Use Enhanced Profit Protection", group="Enhanced Protection")
+enhancedTrailTrigger = input.int(12, "Trail Trigger (ticks)", minval=3, maxval=50, group="Enhanced Protection")
+enhancedTrailBuffer = input.int(6, "Trail Buffer (ticks)", minval=2, maxval=20, group="Enhanced Protection")
+enhancedBeOffset = input.int(2, "Breakeven Offset (ticks)", minval=0, maxval=10, group="Enhanced Protection")
+
+// --- Hull moving averages base (inspired by MJV6)
+hullSrc = input.source(close, "Hull Source")
+baseHullMain = input.int(25, "Hull Main (base)", minval=8, maxval=80)
+baseHullFast = input.int(9, "Hull Fast (base)", minval=4, maxval=30)
+baseHullSignal = input.int(14, "Hull Signal (base)", minval=6, maxval=40)
+
+// --- Envelope base
+baseEnvLength = input.int(12, "Envelope Length (base)", minval=6, maxval=50)
+baseEnvDev = input.float(0.8, "Envelope Deviation % (base)", minval=0.3, maxval=3.0)
+
+// --- ATR / Supertrend base
+baseAtrPeriod = input.int(8, "ATR Period (base)", minval=4, maxval=20)
+baseAtrFactor = input.float(2.2, "ATR Factor (base)", minval=1.2, maxval=4.0)
+
+// --- Scalping vs Swing controls
+enableScalping = input.bool(true, "Enable Scalping (1-5m)")
+enableSwing = input.bool(true, "Enable Swing (1-4h)")
+
+// scalping-specific controls
+scalpMaxHoldingBars = input.int(30, "Scalp Max Holding Bars (bars)", minval=5, maxval=200)
+scalpTfMultiplier = input.float(1.0, "Scalp TF Multiplier", minval=0.5, maxval=3.0)
+
+// swing-specific controls
+swingMaxHoldingBars = input.int(800, "Swing Max Holding Bars (bars)", minval=100, maxval=5000)
+swingTfMultiplier = input.float(2.8, "Swing TF Multiplier", minval=1.0, maxval=8.0)
+
+// --- Timeframe detection
+currentTF = timeframe.period
+is1min = currentTF == "1" or currentTF == "1m"
+is2min = currentTF == "2" or currentTF == "2m"
+is3min = currentTF == "3" or currentTF == "3m"
+is5min = currentTF == "5" or currentTF == "5m"
+
+is1h = currentTF == "60" or currentTF == "1h"
+is2h = currentTF == "120" or currentTF == "2h"
+is3h = currentTF == "180" or currentTF == "3h"
+is4h = currentTF == "240" or currentTF == "4h"
+
+isScalpTF = is1min or is2min or is3min or is5min
+isSwingTF = is1h or is2h or is3h or is4h
+
+// --- Instrument-specific tuning
+multiplierByInstrument = isMYM ? mymMultiplier : isMES ? mesMultiplier : isM2K ? m2kMultiplier : 1.0
+
+// adapt base periods for instrument (M2K needs longer periods for stability)
+hullPeriodMain = math.round(baseHullMain * (isMES ? 0.9 : isMYM ? 1.0 : isM2K ? 1.4 : 1.05))
+hullPeriodFast = math.round(baseHullFast * (isMES ? 0.9 : isMYM ? 1.0 : isM2K ? 1.3 : 1.05))
+hullPeriodSignal = math.round(baseHullSignal * (isMES ? 0.95 : isMYM ? 1.0 : isM2K ? 1.35 : 1.05))
+
+envLength = math.round(baseEnvLength * (isMES ? 0.95 : isMYM ? 1.0 : isM2K ? 1.3 : 1.05))
+envDev = baseEnvDev * (isMES ? 0.9 : isMYM ? 1.0 : isM2K ? 1.25 : 1.05)
+
+// M2K needs higher ATR factor for wider stops due to volatility
+atrPeriod = math.round(baseAtrPeriod * (isScalpTF ? 0.9 : 1.4) * (isM2K ? 1.2 : 1.0))
+atrFactor = baseAtrFactor * (isScalpTF ? 1.0 : 1.15) * (isM2K ? 1.4 : 1.0)
+
+// --- adaptive periods by mode (scalp vs swing)
+adaptiveHullMain = isScalpTF ? math.round(hullPeriodMain * 0.75) : isSwingTF ? math.round(hullPeriodMain * 1.8) : hullPeriodMain
+adaptiveHullFast = isScalpTF ? math.round(hullPeriodFast * 0.85) : isSwingTF ? math.round(hullPeriodFast * 1.6) : hullPeriodFast
+adaptiveHullSignal = isScalpTF ? math.round(hullPeriodSignal * 0.9) : isSwingTF ? math.round(hullPeriodSignal * 1.7) : hullPeriodSignal
+
+adaptiveEnvLength = isScalpTF ? math.round(envLength * 0.8) : isSwingTF ? math.round(envLength * 1.8) : envLength
+adaptiveEnvDev = isScalpTF ? envDev * 0.95 : isSwingTF ? envDev * 1.15 : envDev
+
+// --- HMA
+hma(src, len) => ta.wma(2 * ta.wma(src, math.round(len / 2)) - ta.wma(src, len), math.round(math.sqrt(len)))
+
+hullMain = hma(hullSrc, math.max(2, adaptiveHullMain))
+hullFast = hma(hullSrc, math.max(2, adaptiveHullFast))
+hullSignal = hma(hullSrc, math.max(2, adaptiveHullSignal))
+
+slopeMain = hullMain > hullMain[1] ? 1 : hullMain < hullMain[1] ? -1 : 0
+slopeFast = hullFast > hullFast[1] ? 1 : hullFast < hullFast[1] ? -1 : 0
+
+hullAnyBullish = slopeMain == 1 or slopeFast == 1
+hullAnyBearish = slopeMain == -1 or slopeFast == -1
+
+// --- Envelope
+smaBasis = ta.sma(close, math.max(1, adaptiveEnvLength))
+upperEnv = smaBasis * (1 + adaptiveEnvDev / 100)
+lowerEnv = smaBasis * (1 - adaptiveEnvDev / 100)
+
+microBreakoutUp = close > upperEnv * 1.001
+microBreakoutDn = close < lowerEnv * 0.999
+
+envelopeTouch = (close >= upperEnv * 1.0005) or (close <= lowerEnv * 0.9995)
+
+// --- SuperTrend (simplified, from MJV6)
+ph = ta.pivothigh(2, 2)
+pl = ta.pivotlow(2, 2)
+var float center = na
+lastpp = not na(ph) ? ph : not na(pl) ? pl : na
+if not na(lastpp)
+    center := na(center) ? lastpp : (center + lastpp) / 2
+else if na(center)
+    center := close
+
+atrST = ta.atr(atrPeriod)
+upBand = na(center) ? close - atrFactor * atrST : center - atrFactor * atrST
+dnBand = na(center) ? close + atrFactor * atrST : center + atrFactor * atrST
+
+var float trUp = na
+var float trDn = na
+var int trend = 1
+trUp := close[1] > trUp[1] ? math.max(upBand, trUp[1]) : upBand
+trDn := close[1] < trDn[1] ? math.min(dnBand, trDn[1]) : dnBand
+trend := close > trDn[1] ? 1 : close < trUp[1] ? -1 : trend[1]
+
+// --- Momentum (M2K needs tighter RSI thresholds)
+rsiPeriod = isScalpTF ? (isM2K ? 8 : 6) : isSwingTF ? (isM2K ? 16 : 12) : (isM2K ? 10 : 8)
+rsi = ta.rsi(close, rsiPeriod)
+
+// RELAXED RSI - wider bands to allow more trades for testing
+momentumBullish = isM2K ? (rsi > 45 and rsi < 75) : isMYM ? (rsi > 40 and rsi < 80) : isMES ? (rsi > 35 and rsi < 85) : (rsi > 30 and rsi < 85)
+momentumBearish = isM2K ? (rsi < 55 and rsi > 25) : isMYM ? (rsi < 60 and rsi > 20) : isMES ? (rsi < 65 and rsi > 15) : (rsi < 70 and rsi > 15)
+
+// --- Volume filter (RELAXED for testing)
+volMA = ta.sma(volume, 20)
+volumeConfirmed = volume > volMA * (isM2K ? 1.2 : isMYM ? 1.1 : isMES ? 1.0 : 0.5)  // Relaxed volume requirements
+
+// --- Trend filter (50 EMA for swing trades)
+trendMA = ta.ema(close, 50)
+inUptrend = close > trendMA and trendMA > trendMA[5]
+inDowntrend = close < trendMA and trendMA < trendMA[5]
+
+// --- Price action confirmation
+bullishCandle = close > open and close > close[1]
+bearishCandle = close < open and close < close[1]
+
+// --- Signals adapted from MJV6 principles (MUCH STRICTER - AND logic for quality)
+// Base signals now require ALL confirmations (not OR)
+microBuySignal = close > smaBasis and hullAnyBullish and microBreakoutUp and slopeMain == 1
+microSellSignal = close < smaBasis and hullAnyBearish and microBreakoutDn and slopeMain == -1
+
+// Strong signals require full alignment
+strongBuySignal = slopeMain == 1 and slopeFast == 1 and trend == 1 and momentumBullish and close > smaBasis
+strongSellSignal = slopeMain == -1 and slopeFast == -1 and trend == -1 and momentumBearish and close < smaBasis
+
+// combine with mode logic (ONLY strong signals - removed weak micro signals)
+scalpBuySignal = enableScalping and isScalpTF and strongBuySignal and volumeConfirmed
+scalpSellSignal = enableScalping and isScalpTF and strongSellSignal and volumeConfirmed
+
+// M2K gets additional trend confirmation requirement
+swingBuySignal = enableSwing and isSwingTF and strongBuySignal and volumeConfirmed and inUptrend and (rsi > 40 and rsi < 70) and (isM2K ? (close > ta.ema(close, 20)) : true)
+swingSellSignal = enableSwing and isSwingTF and strongSellSignal and volumeConfirmed and inDowntrend and (rsi < 60 and rsi > 30) and (isM2K ? (close < ta.ema(close, 20)) : true)
+
+// final conditions with candle confirmation
+longCondition = (scalpBuySignal or swingBuySignal) and bullishCandle
+shortCondition = (scalpSellSignal or swingSellSignal) and bearishCandle
+
+// --- State tracking variables for advanced exit systems
+var float trailStop = na
+var bool breakevenSet = false
+var bool tp1Hit = false
+var bool tp2Hit = false
+var bool tp3Hit = false
+var bool tp4Hit = false
+var float peakProfit = 0.0
+var int entryTime = na
+var float[] profitLocks = array.new<float>()
+var int lockLevel = 0
+
+// --- UNIFIED STOP LOSS SYSTEM - Never gets cancelled, only upgraded
+var float activeStopLoss = na
+var bool profitLock1Reached = false
+var bool profitLock2Reached = false
+var bool profitLock3Reached = false
+var bool breakevenReached = false
+
+// Enhanced Profit Protection State Variables
+var float enhancedEntryPrice = na
+var bool enhancedTrailActive = false
+var float enhancedDynamicStop = na
+
+// Alert Dedupe System
+var int lastLongBar = -1
+var int lastShortBar = -1
+
+// Reset state on new position
+if strategy.position_size != 0 and strategy.position_size[1] == 0
+    trailStop := na
+    breakevenSet := false
+    tp1Hit := false
+    tp2Hit := false
+    tp3Hit := false
+    tp4Hit := false
+    peakProfit := 0.0
+    entryTime := time
+    array.clear(profitLocks)
+    lockLevel := 0
+    // Reset enhanced protection state
+    enhancedEntryPrice := na
+    enhancedTrailActive := false
+    enhancedDynamicStop := na
+    // Reset unified stop system
+    activeStopLoss := na
+    profitLock1Reached := false
+    profitLock2Reached := false
+    profitLock3Reached := false
+    breakevenReached := false
+
+// Reset enhanced protection state when position closes
+if strategy.position_size == 0 and strategy.position_size[1] != 0
+    enhancedEntryPrice := na
+    enhancedTrailActive := false
+    enhancedDynamicStop := na
+    // Reset unified stop system
+    activeStopLoss := na
+    profitLock1Reached := false
+    profitLock2Reached := false
+    profitLock3Reached := false
+    breakevenReached := false
+
+// --- Position sizing & risk (inspired by MJV6 dynamic sizing)
+baseRiskPercent = input.float(0.5, "Base Risk %", minval=0.1, maxval=3.0)
+instrumentRiskMultiplier = multiplierByInstrument
+
+tfMultiplier = isScalpTF ? scalpTfMultiplier : isSwingTF ? swingTfMultiplier : 1.0
+riskMultiplier = tfMultiplier * instrumentRiskMultiplier
+// ULTRA-CONSERVATIVE risk reduction until R/R issues resolved
+effectiveRiskPercent = math.min(baseRiskPercent * riskMultiplier * (isM2K ? 0.1 : isMYM ? 0.15 : isMES ? 0.2 : 1.0), 2.0)
+
+atr = ta.atr(10)
+// ULTRA-TIGHT STOPS - Fix catastrophic R/R ratios (50% reduction from emergency levels)
+stopMultiplier = isScalpTF ? (isM2K ? 0.75 : isMYM ? 0.9 : isMES ? 0.8 : 1.0) : (isM2K ? 1.4 : isMYM ? 1.75 : isMES ? 1.6 : 2.0)  
+stopDistance = atr * stopMultiplier
+stopDollar = math.max(stopDistance * syminfo.pointvalue, 0.01)  // prevent division by zero
+riskAmount = strategy.equity * effectiveRiskPercent / 100
+
+minSize = math.max(strategy.initial_capital * 0.002, 50)
+rawSize = stopDollar > 0 ? riskAmount / stopDollar : minSize  // safe division
+calculatedSize = math.max(minSize, math.abs(rawSize))  // ensure positive
+calculatedSize := math.max(math.min(calculatedSize, strategy.equity * 0.08), 50)  // ULTRA-CONSERVATIVE: 0.08 max equity per trade
+
+// Apply manual position size override if enabled
+finalPositionSize = useManualSize ? (manualSizeMode == "Percentage" ? math.max(strategy.equity * manualSizePercent / 100, 50) : math.max(manualSizeDollars, 50)) : calculatedSize
+
+// === MANDATORY RISK/REWARD VALIDATION ===
+// Calculate minimum TP1 required for 1.5:1 reward vs risk ratio (relaxed from 2:1)
+minTP1ForRiskReward = stopDistance * 1.5  // 1.5:1 minimum R/R (more achievable)
+currentTP1Target = isScalpTF ? (atr * scalpTP1ATR) : (atr * swingTP1ATR)
+
+// Reject trades with poor risk/reward ratios
+riskRewardValid = currentTP1Target >= minTP1ForRiskReward
+riskRewardRatio = currentTP1Target > 0 ? (currentTP1Target / stopDistance) : 0.0
+
+// --- Entries
+entryId = str.tostring(bar_index) + (isMYM ? "_MYM" : isMES ? "_MES" : isM2K ? "_M2K" : "")
+
+// Validate position size before entry
+validPositionSize = finalPositionSize > 0 and finalPositionSize < 1e12  // must be positive and reasonable
+
+// Apply dedupe logic if enabled
+canLong = useAlertDedupe ? (lastLongBar != bar_index) : true
+canShort = useAlertDedupe ? (lastShortBar != bar_index) : true
+
+// EMERGENCY volatility filters for all instruments
+volatilityFilter = isM2K ? (atr/close < 0.008) : isMYM ? (atr/close < 0.012) : isMES ? (atr/close < 0.010) : true
+
+// EMERGENCY trend strength filters for all instruments  
+trendFilter = isM2K ? (math.abs(close - ta.sma(close, 50)) / close < 0.02) : isMYM ? (math.abs(close - ta.sma(close, 50)) / close < 0.025) : isMES ? (math.abs(close - ta.sma(close, 50)) / close < 0.023) : true
+
+if longCondition and validPositionSize and (strategy.position_size == 0 or allowMultiplePositions) and not (strategy.netprofit - strategy.netprofit[1] < -strategy.initial_capital * maxDailyLoss / 100) and canLong and volatilityFilter and trendFilter // TEMP: Disabled R/R filter to debug
+    alertMsg = "LONG ENTRY - " + syminfo.ticker + 
+               " | Mode: " + (isScalpTF ? "SCALP" : isSwingTF ? "SWING" : "OTHER") +
+               " | Size: $" + str.tostring(finalPositionSize, "#.##") +
+               " | Price: " + str.tostring(close, "#.##") + 
+               " | Stop: " + str.tostring(close - stopDistance, "#.##") +
+               " | R/R: " + str.tostring(riskRewardRatio, "#.#") + ":1"
+    strategy.entry("Long_" + entryId, strategy.long, qty=finalPositionSize, alert_message=alertMsg)
+    if useAlertDedupe
+        lastLongBar := bar_index
+
+if shortCondition and validPositionSize and (strategy.position_size == 0 or allowMultiplePositions) and not (strategy.netprofit - strategy.netprofit[1] < -strategy.initial_capital * maxDailyLoss / 100) and canShort and volatilityFilter and trendFilter // TEMP: Disabled R/R filter to debug
+    alertMsg = "SHORT ENTRY - " + syminfo.ticker + 
+               " | Mode: " + (isScalpTF ? "SCALP" : isSwingTF ? "SWING" : "OTHER") +
+               " | Size: $" + str.tostring(finalPositionSize, "#.##") +
+               " | Price: " + str.tostring(close, "#.##") + 
+               " | Stop: " + str.tostring(close + stopDistance, "#.##") +
+               " | R/R: " + str.tostring(riskRewardRatio, "#.#") + ":1"
+    strategy.entry("Short_" + entryId, strategy.short, qty=finalPositionSize, alert_message=alertMsg)
+    if useAlertDedupe
+        lastShortBar := bar_index
+
+// === Enhanced Profit Protection Logic ===
+if useEnhancedProtection and strategy.position_size != 0
+    if na(enhancedEntryPrice)
+        enhancedEntryPrice := strategy.position_avg_price
+
+    profitTicks = (close - enhancedEntryPrice) / syminfo.mintick * (strategy.position_size > 0 ? 1 : -1)
+
+    if profitTicks >= enhancedTrailTrigger and not enhancedTrailActive
+        enhancedTrailActive := true
+        enhancedDynamicStop := enhancedEntryPrice + (strategy.position_size > 0 ? (enhancedTrailBuffer * syminfo.mintick) : -(enhancedTrailBuffer * syminfo.mintick))
+        
+    if enhancedTrailActive
+        // Move stop up only for longs, down only for shorts
+        newStop = close - (enhancedTrailBuffer * syminfo.mintick) * (strategy.position_size > 0 ? 1 : -1)
+        if (strategy.position_size > 0 and newStop > enhancedDynamicStop) or (strategy.position_size < 0 and newStop < enhancedDynamicStop)
+            enhancedDynamicStop := newStop
+        strategy.exit("Enhanced_Trail", stop=enhancedDynamicStop, 
+                     alert_message="ENHANCED TRAIL STOP - " + syminfo.ticker + " | Stop: " + str.tostring(enhancedDynamicStop, "#.##"))
+
+// === UNIFIED STOP LOSS SYSTEM - Never Cancelled, Only Upgraded ===
+if strategy.position_size != 0 and not useEnhancedProtection
+    entryPrice = strategy.position_avg_price
+    currentProfit = strategy.openprofit
+    isLong = strategy.position_size > 0
+    
+    // Update peak profit for drawdown protection
+    if currentProfit > peakProfit
+        peakProfit := currentProfit
+    
+    // Calculate dynamic ATR for stops
+    dynamicATRValue = ta.atr(atrDynamicLookback)
+    dynamicATR = useDynamicATR ? dynamicATRValue : atr
+    
+    // 1. CALCULATE BASE STOP (Initial stop loss)
+    futuresStopDistance = stopDistance
+    baseStopLoss = isLong ? entryPrice - futuresStopDistance : entryPrice + futuresStopDistance
+    
+    // Initialize active stop on first bar of position
+    if na(activeStopLoss)
+        activeStopLoss := baseStopLoss
+    
+    // 2. HIERARCHICAL STOP UPGRADES (Never downgrade, only upgrade)
+    
+    // Check for profit lock levels
+    currentPnLATR = isLong ? (close - entryPrice) / dynamicATR : (entryPrice - close) / dynamicATR
+    
+    // Profit Lock Level 3 (Highest)
+    if currentPnLATR >= (profitLockStep * 3) and not profitLock3Reached
+        profitLock3Reached := true
+        lockPrice = isLong ? close - (dynamicATR * profitLockTrail * 0.7) : close + (dynamicATR * profitLockTrail * 0.7)
+        activeStopLoss := isLong ? math.max(activeStopLoss, lockPrice) : math.min(activeStopLoss, lockPrice)
+        
+    // Profit Lock Level 2
+    else if currentPnLATR >= (profitLockStep * 2) and not profitLock2Reached
+        profitLock2Reached := true
+        lockPrice = isLong ? close - (dynamicATR * profitLockTrail * 0.8) : close + (dynamicATR * profitLockTrail * 0.8)
+        activeStopLoss := isLong ? math.max(activeStopLoss, lockPrice) : math.min(activeStopLoss, lockPrice)
+        
+    // Profit Lock Level 1
+    else if currentPnLATR >= profitLockStep and not profitLock1Reached
+        profitLock1Reached := true
+        lockPrice = isLong ? close - (dynamicATR * profitLockTrail) : close + (dynamicATR * profitLockTrail)
+        activeStopLoss := isLong ? math.max(activeStopLoss, lockPrice) : math.min(activeStopLoss, lockPrice)
+        
+    // Breakeven Protection
+    else if useBreakeven and currentPnLATR >= breakevenTriggerATR and not breakevenReached
+        breakevenReached := true
+        bePrice = entryPrice + (isLong ? breakevenBufferTicks * syminfo.mintick : -breakevenBufferTicks * syminfo.mintick)
+        activeStopLoss := isLong ? math.max(activeStopLoss, bePrice) : math.min(activeStopLoss, bePrice)
+    
+    // 3. TRAILING STOP INTEGRATION (Only upgrade if better)
+    if useTrailingStop and (not trailOnlyAfterTP1 or tp1Hit)
+        profitForTrail = dynamicATR * trailActivationATR
+        currentPnL = isLong ? (close - entryPrice) : (entryPrice - close)
+        
+        if currentPnL >= profitForTrail
+            newTrailStop = isLong ? close - (dynamicATR * trailStepATR) : close + (dynamicATR * trailStepATR)
+            trailStop := na(trailStop) ? newTrailStop : (isLong ? math.max(trailStop, newTrailStop) : math.min(trailStop, newTrailStop))
+            
+            // Only upgrade activeStopLoss if trailing stop is better
+            activeStopLoss := isLong ? math.max(activeStopLoss, trailStop) : math.min(activeStopLoss, trailStop)
+    
+    // 6. BACKUP STOP PROTECTION (Never override unified stop if better)
+    if useBackupStop
+        backupStopPrice = isLong ? entryPrice * (1 - backupStopPercent/100) : entryPrice * (1 + backupStopPercent/100)
+        // Only use backup stop if worse than active stop (emergency only)
+        if (isLong and backupStopPrice < activeStopLoss) or (not isLong and backupStopPrice > activeStopLoss)
+            activeStopLoss := backupStopPrice
+    
+    // 7. MAXIMUM PROFIT DRAWDOWN PROTECTION
+    if useMaxDrawdown and peakProfit > (dynamicATR * drawdownMinProfit * syminfo.pointvalue)
+        drawdownFromPeak = peakProfit > 0 ? ((peakProfit - currentProfit) / peakProfit) * 100 : 0
+        
+        if drawdownFromPeak >= maxDrawdownPercent
+            strategy.close_all(comment="Max_Drawdown", 
+                              alert_message="MAX DRAWDOWN HIT - " + syminfo.ticker + " | Drawdown: " + str.tostring(drawdownFromPeak, "#.#") + "%")
+    
+    // 8. TIME-BASED PROFIT PROTECTION
+    if useTimeProtection and not na(entryTime)
+        timeHeldMinutes = (time - entryTime) / (1000 * 60)
+        minProfitForTimeExit = dynamicATR * timeProtectionMinProfit * syminfo.pointvalue
+        
+        if timeHeldMinutes >= profitTimeDecayMinutes and currentProfit >= minProfitForTimeExit
+            strategy.close_all(comment="Time_Profit_Protection", 
+                              alert_message="TIME PROTECTION EXIT - " + syminfo.ticker + " | Held: " + str.tostring(timeHeldMinutes, "#") + "min")
+    
+    // 4. UNIFIED TAKE PROFIT SYSTEM - All exits use same stop
+    if useTP and useAdvancedTP
+        // Calculate TP levels based on timeframe
+        tp1Ticks = isScalpTF ? math.round((dynamicATR * scalpTP1ATR) / syminfo.mintick) : math.round((dynamicATR * swingTP1ATR) / syminfo.mintick)
+        tp2Ticks = isScalpTF ? math.round((dynamicATR * scalpTP2ATR) / syminfo.mintick) : math.round((dynamicATR * swingTP2ATR) / syminfo.mintick)
+        tp3Ticks = isScalpTF ? math.round((dynamicATR * scalpTP3ATR) / syminfo.mintick) : math.round((dynamicATR * swingTP3ATR) / syminfo.mintick)
+        tp4Ticks = isScalpTF ? math.round((dynamicATR * scalpTP4ATR) / syminfo.mintick) : math.round((dynamicATR * swingTP4ATR) / syminfo.mintick)
+        
+        // Calculate stop loss points from entry for all exits
+        stopLossPoints = math.round(math.abs(activeStopLoss - entryPrice) / syminfo.mintick)
+        
+        // ALL EXITS USE THE SAME UNIFIED STOP - Never cancelled, only upgraded
+        if not tp1Hit
+            suffix = isLong ? "_L" : "_S"
+            alertMsg = "TP1 HIT (" + str.tostring(tp1Percent, "#") + "%) - " + syminfo.ticker + 
+                       " | Profit: " + str.tostring(tp1Ticks * syminfo.mintick, "#.##") +
+                       " | Stop: " + str.tostring(activeStopLoss, "#.##")
+            strategy.exit("TP1" + suffix, qty_percent=tp1Percent, profit=tp1Ticks, loss=stopLossPoints, alert_message=alertMsg)
+        
+        if not tp2Hit
+            suffix = isLong ? "_L" : "_S"
+            alertMsg = "TP2 HIT (" + str.tostring(tp2Percent, "#") + "%) - " + syminfo.ticker + 
+                       " | Profit: " + str.tostring(tp2Ticks * syminfo.mintick, "#.##") +
+                       " | Stop: " + str.tostring(activeStopLoss, "#.##")
+            strategy.exit("TP2" + suffix, qty_percent=tp2Percent, profit=tp2Ticks, loss=stopLossPoints, alert_message=alertMsg)
+        
+        if not tp3Hit
+            suffix = isLong ? "_L" : "_S"
+            alertMsg = "TP3 HIT (" + str.tostring(tp3Percent, "#") + "%) - " + syminfo.ticker + 
+                       " | Profit: " + str.tostring(tp3Ticks * syminfo.mintick, "#.##") +
+                       " | Stop: " + str.tostring(activeStopLoss, "#.##")
+            strategy.exit("TP3" + suffix, qty_percent=tp3Percent, profit=tp3Ticks, loss=stopLossPoints, alert_message=alertMsg)
+        
+        if not tp4Hit
+            suffix = isLong ? "_L" : "_S"
+            alertMsg = "TP4 HIT (" + str.tostring(tp4Percent, "#") + "%) - " + syminfo.ticker + 
+                       " | Profit: " + str.tostring(tp4Ticks * syminfo.mintick, "#.##") +
+                       " | Stop: " + str.tostring(activeStopLoss, "#.##")
+            strategy.exit("TP4" + suffix, qty_percent=tp4Percent, profit=tp4Ticks, loss=stopLossPoints, alert_message=alertMsg)
+    
+    // 5. FALLBACK UNIFIED STOP (if no TP system active)
+    else if useSL
+        stopLossPoints = math.round(math.abs(activeStopLoss - entryPrice) / syminfo.mintick)
+        strategy.exit("Unified_Stop", loss=stopLossPoints, 
+                     alert_message="UNIFIED STOP HIT - " + syminfo.ticker + " | Stop: " + str.tostring(activeStopLoss, "#.##"))
+
+// --- Track TP hits for state management
+if strategy.closedtrades > 0
+    lastTradeIndex = strategy.closedtrades - 1
+    if lastTradeIndex != lastTradeIndex[1]
+        lastExitComment = strategy.closedtrades.exit_comment(lastTradeIndex)
+        if str.contains(lastExitComment, "TP1")
+            tp1Hit := true
+        if str.contains(lastExitComment, "TP2") 
+            tp2Hit := true
+        if str.contains(lastExitComment, "TP3")
+            tp3Hit := true
+        if str.contains(lastExitComment, "TP4")
+            tp4Hit := true
+
+// --- Holding period enforcement (close if held too long)
+var int entryBar = na
+if strategy.position_size != 0 and strategy.position_size[1] == 0
+    entryBar := bar_index
+
+holdingPeriod = bar_index - entryBar
+if strategy.position_size != 0
+    maxHold = isScalpTF ? scalpMaxHoldingBars : isSwingTF ? swingMaxHoldingBars : scalpMaxHoldingBars
+    if holdingPeriod >= maxHold
+        strategy.close_all(comment="MaxHold", alert_message="MAX HOLDING PERIOD - " + syminfo.ticker + " | Held: " + str.tostring(holdingPeriod) + " bars")
+
+// --- Plots & debug
+plot(hullMain, color=trend == 1 ? color.green : color.red, linewidth=2, title="Hull Main")
+plot(hullFast, color=color.gray, title="Hull Fast")
+plot(upperEnv, color=color.orange, title="Envelope Upper")
+plot(lowerEnv, color=color.orange, title="Envelope Lower")
+plot(trend == 1 ? trUp : trDn, color=trend == 1 ? color.green : color.red, linewidth=2, title="SuperTrend")
+plot(trendMA, color=color.purple, linewidth=1, title="Trend MA (50 EMA)")  // NEW: trend filter visualization
+
+plotshape(longCondition and isScalpTF, location=location.belowbar, color=color.lime, style=shape.triangleup, text="SCALP LONG")
+plotshape(shortCondition and isScalpTF, location=location.abovebar, color=color.red, style=shape.triangledown, text="SCALP SHORT")
+plotshape(longCondition and isSwingTF, location=location.belowbar, color=color.aqua, style=shape.labelup, text="SWING LONG")
+plotshape(shortCondition and isSwingTF, location=location.abovebar, color=color.orange, style=shape.labeldown, text="SWING SHORT")
+
+// --- Visual indicators for exit levels
+plot(strategy.position_size != 0 and not na(trailStop) and not useEnhancedProtection ? trailStop : na, "Trailing Stop", color=color.blue, linewidth=1, style=plot.style_stepline)
+plot(strategy.position_size != 0 and not na(enhancedDynamicStop) and useEnhancedProtection ? enhancedDynamicStop : na, "Enhanced Protection Stop", color=color.red, linewidth=2, style=plot.style_stepline)
+
+// Unified Stop Loss Visualization
+plot(strategy.position_size != 0 and not na(activeStopLoss) and not useEnhancedProtection ? activeStopLoss : na, "Unified Stop Loss", color=color.red, linewidth=3, style=plot.style_stepline)
+
+// debug in data window  
+plot(finalPositionSize, "Position Size", color=color.new(color.yellow, 80), display=display.data_window)
+plot(effectiveRiskPercent, "Effective Risk %", color=color.new(color.orange, 80), display=display.data_window)
+plot(holdingPeriod, "Holding Period", color=color.new(color.purple, 80), display=display.data_window)
+plot(isMYM ? 1 : isMES ? 2 : isM2K ? 3 : 0, "Instrument ID", display=display.data_window)
+plot(rsi, "RSI", color=color.new(color.blue, 80), display=display.data_window)
+plot(volumeConfirmed ? 1 : 0, "Volume OK", color=color.new(color.green, 80), display=display.data_window)
+
+// Advanced exit system debug info
+plot(tp1Hit ? 1 : 0, "TP1 Hit", color=color.new(color.green, 80), display=display.data_window)
+plot(tp2Hit ? 1 : 0, "TP2 Hit", color=color.new(color.green, 80), display=display.data_window)  
+plot(tp3Hit ? 1 : 0, "TP3 Hit", color=color.new(color.green, 80), display=display.data_window)
+plot(tp4Hit ? 1 : 0, "TP4 Hit", color=color.new(color.green, 80), display=display.data_window)
+plot(breakevenReached ? 1 : 0, "Breakeven Reached", color=color.new(color.yellow, 80), display=display.data_window)
+plot(peakProfit, "Peak Profit $", color=color.new(color.lime, 80), display=display.data_window)
+plot(strategy.openprofit, "Current P&L $", color=strategy.openprofit >= 0 ? color.new(color.green, 80) : color.new(color.red, 80), display=display.data_window)
+
+// Unified Stop System debug info
+plot(activeStopLoss, "Unified Active Stop", color=color.new(color.red, 80), display=display.data_window)
+plot(profitLock1Reached ? 1 : 0, "Profit Lock 1", color=color.new(color.blue, 80), display=display.data_window)
+plot(profitLock2Reached ? 1 : 0, "Profit Lock 2", color=color.new(color.blue, 80), display=display.data_window)
+plot(profitLock3Reached ? 1 : 0, "Profit Lock 3", color=color.new(color.blue, 80), display=display.data_window)
+
+// Manual sizing info
+plot(useManualSize ? 1 : 0, "Manual Size Active", color=color.new(color.purple, 80), display=display.data_window)
+
+// Enhanced Protection debug info
+plot(useEnhancedProtection ? 1 : 0, "Enhanced Protection On", color=color.new(color.aqua, 80), display=display.data_window)
+plot(enhancedTrailActive ? 1 : 0, "Enhanced Trail Active", color=color.new(color.lime, 80), display=display.data_window)
+plot(enhancedDynamicStop, "Enhanced Stop Price", color=color.new(color.red, 80), display=display.data_window)
+
+// Execution settings debug
+plot(useAlertDedupe ? 1 : 0, "Alert Dedupe On", color=color.new(color.yellow, 80), display=display.data_window)
+
+// All instruments debug info (EMERGENCY VERSION)
+plot(atr/close * 100, "ATR%", color=color.new(color.orange, 80), display=display.data_window)
+plot(volatilityFilter ? 1 : 0, "Volatility Filter OK", color=color.new(color.purple, 80), display=display.data_window)
+plot(trendFilter ? 1 : 0, "Trend Filter OK", color=color.new(color.maroon, 80), display=display.data_window)
+plot(math.abs(close - ta.sma(close, 50)) / close * 100, "Distance from SMA50%", color=color.new(color.navy, 80), display=display.data_window)
+
+// Risk/Reward Optimization debug info
+plot(riskRewardValid ? 1 : 0, "R/R Valid (>=1.5:1)", color=color.new(color.lime, 80), display=display.data_window)
+plot(riskRewardRatio, "Current R/R Ratio", color=color.new(color.aqua, 80), display=display.data_window)
+plot(stopDistance, "Stop Distance", color=color.new(color.red, 80), display=display.data_window)
+plot(currentTP1Target, "TP1 Target Distance", color=color.new(color.green, 80), display=display.data_window)
+plot(minTP1ForRiskReward, "Min TP1 Required", color=color.new(color.orange, 80), display=display.data_window)
+plot(longCondition ? 1 : 0, "Long Signal", color=color.new(color.blue, 80), display=display.data_window)
+plot(shortCondition ? 1 : 0, "Short Signal", color=color.new(color.purple, 80), display=display.data_window)
